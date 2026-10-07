@@ -63,6 +63,7 @@ details input{width:100%;margin:4px 0}
   <input id="src" placeholder="Paste Google Drive file or folder link" aria-label="Google Drive link">
   <button id="go">Open from Drive</button>
   <select id="books" hidden aria-label="Book in folder"></select>
+  <button id="sy" title="Sync page, notes and vocabulary across devices through your own Google Drive">Sync: off</button>
   <button id="lb">Open local PDF</button><input id="loc" type="file" accept="application/pdf" hidden>
   <span id="msg"></span>
 </header>
@@ -110,7 +111,7 @@ details input{width:100%;margin:4px 0}
       <small>Anthropic API key for Summary, Quiz and Ask. It is stored only in this browser. Never put it in the repo.</small>
       <input id="ak" type="password" placeholder="Anthropic API key (sk-ant-…)" autocomplete="off">
       <input id="md" placeholder="Model (default: claude-sonnet-5-5)">
-      <small>Google Drive (optional, only if you do not host the PDFs in the repo)</small>
+      <small>Google Client ID: needed for Sync across devices (and for Drive-hosted books)</small>
       <input id="cid" placeholder="OAuth Client ID">
       <input id="key" placeholder="API key (public folder)">
       <button id="sc">Save settings</button>
@@ -126,14 +127,14 @@ const $=s=>document.querySelector(s);
 pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 /* ===== EMBEDDED SETTINGS (edit here) ===== */
 const FOLDER_LINK='https://drive.google.com/drive/folders/1SJyYeG3dSafRR3ChgZKHem7_LNJ5IIlf?usp=sharing';
-const CLIENT_ID='';  // paste your OAuth Client ID here to skip the settings panel (safe to publish)
+const CLIENT_ID='894907343463-n9f8trpmeio5trb74n16ak00ujboduj4.apps.googleusercontent.com';  // paste your OAuth Client ID here to skip the settings panel (safe to publish)
 const API_KEY='';    // optional: for public folders (restrict this key to your site in Google Cloud)
 /* ========================================= */
 const cfg=Object.assign(JSON.parse(localStorage.cfg||'{}'),{last:FOLDER_LINK});
 if(CLIENT_ID)cfg.cid=CLIENT_ID;if(API_KEY)cfg.key=API_KEY;
-const S={doc:null,key:null,page:1,scale:null,mode:'select',D:null,task:null,vp:null,tick:0,pid:0};
+const S={doc:null,key:null,page:1,scale:null,mode:'select',D:null,task:null,vp:null,tick:0,pid:0,fids:{}};
 const toast=t=>$('#msg').textContent=t;
-const save=()=>{try{localStorage['fr:'+S.key]=JSON.stringify(S.D)}catch(e){toast('Storage full – export a backup')}};
+const save=()=>{try{if(!S.hold)S.D.ts=Date.now();localStorage['fr:'+S.key]=JSON.stringify(S.D)}catch(e){toast('Storage full – export a backup')}if(!S.hold&&S.stok){clearTimeout(S.pt);S.pt=setTimeout(push,2500)}};
 const ink=$('#ink');
 
 /* ---------- loading ---------- */
@@ -144,7 +145,7 @@ async function openBuf(buf,key){
   S.scale=S.D.scale;
   $('#empty').style.display='none';$('#page').style.display='block';
   $('#tot').textContent=S.doc.numPages;$('#cur').max=S.doc.numPages;
-  renderVocab();show(S.D.page||1);
+  renderVocab();S.hold=true;show(S.D.page||1);S.hold=false;
 }
 const fileId=s=>(s.match(/\/d\/([\w-]{20,})/)||s.match(/[?&]id=([\w-]{20,})/)||s.match(/^([\w-]{20,})$/)||[])[1];
 function token(){return new Promise((ok,no)=>{
@@ -191,6 +192,7 @@ async function openBook(id){
     await openBuf(await(await gfetch('https://www.googleapis.com/drive/v3/files/'+id+'?alt=media')).arrayBuffer(),id);
   }
   cfg.book=id;localStorage.cfg=JSON.stringify(cfg);toast(S.D.page>1?'Resumed at page '+S.D.page:'');
+  if(S.stok)pull().catch(()=>{});
 }
 /* PDFs placed next to index.html: list them here, or leave empty to auto-detect on GitHub Pages */
 const BOOKS=[['Method','Method'],['Exercise','Exercise']]; // [label, base name]; Method-1.pdf, Method-2.pdf … are merged. Names are case-sensitive
@@ -346,6 +348,70 @@ function renderVocab(){
 }
 const download=(name,text,type)=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),999)};
 const clean=s=>String(s).replace(/[\t\r\n]+/g,' ');
+
+/* ---------- cross-device sync (hidden app folder in YOUR Google Drive) ---------- */
+const setSy=t=>$('#sy').textContent=t;
+const fname=()=>'fr-'+S.key.replace(/[^\w.-]/g,'_')+'.json';
+function syncTok(){return new Promise((ok,no)=>{
+  if(S.stok&&S.sexp>Date.now())return ok(S.stok);
+  if(!window.google)return no(new Error('Google sign-in script not loaded'));
+  google.accounts.oauth2.initTokenClient({client_id:cfg.cid,scope:'https://www.googleapis.com/auth/drive.appdata',
+    callback:r=>{if(r.access_token){S.stok=r.access_token;S.sexp=Date.now()+3.3e6;cfg.sy=1;localStorage.cfg=JSON.stringify(cfg);ok(S.stok)}else no(new Error(r.error||'Sign-in failed'))},
+    error_callback:e=>no(new Error(e.type||'Sign-in blocked'))}).requestAccessToken({prompt:cfg.sy?'':'consent'});
+});}
+async function drv(u,o={}){
+  const r=await fetch(u,{...o,headers:{Authorization:'Bearer '+S.stok,...(o.headers||{})}});
+  if(!r.ok)throw new Error('Drive '+r.status);return r;
+}
+async function fid(){
+  const n=fname();if(S.fids[n])return S.fids[n];
+  const j=await(await drv('https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&fields=files(id)&q='+encodeURIComponent("name='"+n+"'"))).json();
+  return S.fids[n]=j.files[0]&&j.files[0].id;
+}
+async function push(){
+  if(!S.D||!S.stok||S.sexp<Date.now())return setSy('Sync: tap to reconnect');
+  const n=fname(),body=JSON.stringify(S.D);
+  try{
+    const id=await fid();
+    if(id)await drv('https://www.googleapis.com/upload/drive/v3/files/'+id+'?uploadType=media',{method:'PATCH',headers:{'Content-Type':'application/json'},body});
+    else{
+      const b='frb',mp='--'+b+'\r\nContent-Type: application/json\r\n\r\n'+JSON.stringify({name:n,parents:['appDataFolder']})+'\r\n--'+b+'\r\nContent-Type: application/json\r\n\r\n'+body+'\r\n--'+b+'--';
+      S.fids[n]=(await(await drv('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',{method:'POST',headers:{'Content-Type':'multipart/related; boundary='+b},body:mp})).json()).id;
+    }
+    setSy('Sync: saved '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}));
+  }catch(e){setSy('Sync: error')}
+}
+async function pull(){
+  const key=S.key;
+  if(!S.stok||S.sexp<Date.now()){try{await syncTok()}catch(e){return setSy('Sync: tap to reconnect')}}
+  try{
+    const id=await fid();if(!id)return push();
+    const rd=await(await drv('https://www.googleapis.com/drive/v3/files/'+id+'?alt=media')).json();
+    if(key!==S.key)return;
+    if((rd.ts||0)>(S.D.ts||0)){
+      S.D=rd;try{localStorage['fr:'+key]=JSON.stringify(rd)}catch(e){}
+      S.scale=rd.scale||null;renderVocab();
+      S.hold=true;const p=show(rd.page||1);S.hold=false;await p;
+      toast('Synced from your other device');setSy('Sync: up to date');
+    }else if((rd.ts||0)<(S.D.ts||0))await push();
+    else setSy('Sync: up to date');
+  }catch(e){setSy('Sync: error')}
+}
+$('#sy').onclick=async()=>{
+  if(!cfg.cid){$('#side').classList.add('open');document.querySelector('details').open=true;return toast('Add your Google Client ID first')}
+  if(!S.doc)return toast('Open a book first');
+  try{await syncTok();await pull()}catch(e){setSy('Sync: failed');toast(e.message||String(e))}
+};
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){if(S.pt&&S.stok){clearTimeout(S.pt);S.pt=0;push()}}
+  else if(S.doc&&S.stok&&S.sexp>Date.now())pull();
+});
+document.addEventListener('pointerup',()=>{   /* quietly renew an expired sign-in on the next tap */
+  if(cfg.sy&&cfg.cid&&S.doc&&(!S.stok||S.sexp<Date.now())&&!S.refr&&Date.now()>(S.rt||0)){
+    S.refr=1;syncTok().then(pull).catch(()=>{S.rt=Date.now()+6e4}).finally(()=>S.refr=0);
+  }
+},true);
+setSy(cfg.sy?'Sync: tap to reconnect':'Sync: off');
 
 /* ---------- AI tutor (summary, quiz, key words, ask) ---------- */
 const SYS='You are a patient French tutor for an English-speaking learner. Use ONLY the supplied textbook content as your source. Be concise and accurate.';
