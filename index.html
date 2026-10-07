@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lecteur – French PDF Reader</title>
+<style>
+:root{--bg:#e6eaf0;--fg:#161a22;--panel:#fafbfd;--bd:#ccd3de;--ac:#1c3fb7;--mut:#667085}
+@media(prefers-color-scheme:dark){:root{--bg:#10131a;--fg:#e8ebf2;--panel:#1a1e28;--bd:#2d3342;--ac:#8aa4ff;--mut:#98a1b3}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif;display:flex;flex-direction:column}
+header{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px;background:var(--panel);border-bottom:1px solid var(--bd)}
+button,input,select{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:5px 9px}
+button{cursor:pointer}
+button:hover,button.on{border-color:var(--ac);color:var(--ac)}
+button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--ac);outline-offset:1px}
+select{max-width:220px}
+input[type=number]{width:62px}
+input[type=color]{width:34px;padding:1px;height:30px}
+#src{flex:1;min-width:150px}
+#msg{color:var(--mut);font-size:13px}
+#prog{height:3px;background:var(--ac);width:0;transition:width .3s}
+#wrap{flex:1;display:flex;min-height:0;position:relative}
+#stage{flex:1;overflow:auto;padding:14px;text-align:center}
+#empty{margin:12vh auto 0;max-width:420px;color:var(--mut);text-align:left}
+#empty h2{font:600 28px/1.2 ui-serif,Georgia,serif;color:var(--fg);margin:0 0 8px}
+#page{position:relative;display:none;background:#fff;box-shadow:0 2px 16px #0004;text-align:left}
+#page>*{position:absolute;left:0;top:0}
+#page>#pdf{position:relative;display:block}
+#tl{inset:0;width:100%;height:100%;overflow:hidden;line-height:1;z-index:1}
+#tl span{position:absolute;white-space:pre;color:transparent;transform-origin:0 0;cursor:text}
+#tl ::selection{background:#1c3fb755}
+#ink{width:100%;height:100%;z-index:2;pointer-events:none}
+#notes{width:100%;height:100%;z-index:3;pointer-events:none}
+.note{position:absolute;pointer-events:auto;background:#fff1a8;color:#222;border:1px solid #d3bd3f;border-radius:6px;min-width:130px;max-width:260px;box-shadow:0 2px 8px #0004}
+.note b{display:flex;justify-content:space-between;gap:10px;cursor:move;background:#f0d95c;padding:1px 6px;border-radius:5px 5px 0 0;font-weight:500;user-select:none;touch-action:none}
+.note .x{cursor:pointer}
+.note [contenteditable]{padding:4px 7px;outline:0;min-height:38px;white-space:pre-wrap}
+#side{display:none;width:330px;background:var(--panel);border-left:1px solid var(--bd);flex-direction:column;gap:8px;padding:12px;overflow:auto}
+#side.open{display:flex}
+@media(max-width:720px){#side{position:absolute;right:0;top:0;bottom:0;width:min(350px,100%);z-index:5}}
+#side h3{margin:0;font:600 20px ui-serif,Georgia,serif}
+.v{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--bd)}
+.v strong{font:600 16px ui-serif,Georgia,serif}
+.v small{color:var(--mut);display:block}
+.v button{padding:2px 6px}
+.row{display:flex;flex-wrap:wrap;gap:6px}
+details input{width:100%;margin:4px 0}
+#pop{position:fixed;z-index:9;display:none;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:10px;max-width:290px;box-shadow:0 6px 24px #0005}
+#pop strong{font:600 17px ui-serif,Georgia,serif}
+#pop #tr{margin:4px 0 8px;color:var(--mut)}
+[hidden]{display:none!important}
+.tx{position:absolute;pointer-events:auto;min-width:1.5em;min-height:1em;outline:0;white-space:pre;background:transparent;line-height:1.15;cursor:text;border-bottom:1px dashed transparent;font-family:system-ui,sans-serif}
+.tx:hover,.tx:focus{border-bottom-color:#1c3fb7aa;background:#1c3fb710}
+.tab{display:flex;flex-direction:column;gap:8px}
+#aiout .q{padding:8px 0;border-bottom:1px solid var(--bd)}
+#aiout small,details small{display:block;color:var(--mut);margin-top:2px}
+</style>
+</head>
+<body>
+<header>
+  <input id="src" placeholder="Paste Google Drive file or folder link" aria-label="Google Drive link">
+  <button id="go">Open from Drive</button>
+  <select id="books" hidden aria-label="Book in folder"></select>
+  <button id="lb">Open local PDF</button><input id="loc" type="file" accept="application/pdf" hidden>
+  <span id="msg"></span>
+</header>
+<header>
+  <button id="pv" aria-label="Previous page">◀</button>
+  <input id="cur" type="number" min="1" aria-label="Page"> / <span id="tot">–</span>
+  <button id="nx" aria-label="Next page">▶</button>
+  <button id="zo" aria-label="Zoom out">−</button><button id="zi" aria-label="Zoom in">＋</button><button id="fit">Fit width</button>
+  <span style="width:10px"></span>
+  <button data-m="select">Select text</button>
+  <button data-m="pen">Pen</button>
+  <button data-m="hl">Highlighter</button>
+  <button data-m="erase">Eraser</button>
+  <button data-m="note">Text note</button>
+  <button data-m="type" title="Type plain text with a transparent background – for fill-in exercises">Type text</button>
+  <input type="number" id="fs" value="16" min="8" max="60" title="Text size" aria-label="Text size" style="width:58px">
+  <input type="color" id="col" value="#e63946" aria-label="Ink colour">
+  <button id="un">Undo</button>
+  <button id="vt">Vocabulaire</button>
+</header>
+<div id="prog"></div>
+<div id="wrap">
+  <div id="stage">
+    <div id="empty"><h2>Bonne lecture.</h2>Open your book from Google Drive or from this device. The reader remembers your page, your ink and your notes. Select any French word or phrase to translate it, hear it and save it to your vocabulary.</div>
+    <div id="page"><canvas id="pdf"></canvas><div id="tl"></div><canvas id="ink"></canvas><div id="notes"></div></div>
+  </div>
+  <aside id="side">
+    <div class="row" id="tabs"><button data-t="vo" class="on">Vocabulaire</button><button data-t="ai">AI Tutor</button></div>
+    <div id="tvo" class="tab">
+      <div id="vl"></div>
+      <div class="row"><button id="csv">Export for Anki</button><button id="bk">Backup notes</button><button id="rb">Restore backup</button><input id="rs" type="file" accept=".json" hidden></div>
+    </div>
+    <div id="tai" class="tab" hidden>
+      <small>Works on the open page (or a page range). Scanned pages are read from the page image.</small>
+      <div class="row"><button id="aS">Summary</button><button id="aQ">Quiz</button><button id="aK">Key words</button></div>
+      <div class="row">
+        <select id="scope"><option value="cur">This page</option><option value="rng">Page range</option></select>
+        <input id="a1" type="number" min="1" hidden aria-label="From page" style="width:62px"><input id="a2" type="number" min="1" hidden aria-label="To page" style="width:62px">
+        <select id="qn"><option>5</option><option>10</option></select><span>questions</span>
+      </div>
+      <div class="row"><input id="ask" placeholder="Ask about this page…" style="flex:1;min-width:0"><button id="aA">Ask</button></div>
+      <div id="aiout"></div>
+    </div>
+    <details><summary>Settings (AI key, Google)</summary>
+      <small>Anthropic API key for Summary, Quiz and Ask. It is stored only in this browser. Never put it in the repo.</small>
+      <input id="ak" type="password" placeholder="Anthropic API key (sk-ant-…)" autocomplete="off">
+      <input id="md" placeholder="Model (default: claude-sonnet-5-5)">
+      <small>Google Drive (optional, only if you do not host the PDFs in the repo)</small>
+      <input id="cid" placeholder="OAuth Client ID">
+      <input id="key" placeholder="API key (public folder)">
+      <button id="sc">Save settings</button>
+    </details>
+  </aside>
+</div>
+<div id="pop"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script>
+const $=s=>document.querySelector(s);
+pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+/* ===== EMBEDDED SETTINGS (edit here) ===== */
+const FOLDER_LINK='https://drive.google.com/drive/folders/1SJyYeG3dSafRR3ChgZKHem7_LNJ5IIlf?usp=sharing';
+const CLIENT_ID='';  // paste your OAuth Client ID here to skip the settings panel (safe to publish)
+const API_KEY='';    // optional: for public folders (restrict this key to your site in Google Cloud)
+/* ========================================= */
+const cfg=Object.assign(JSON.parse(localStorage.cfg||'{}'),{last:FOLDER_LINK});
+if(CLIENT_ID)cfg.cid=CLIENT_ID;if(API_KEY)cfg.key=API_KEY;
+const S={doc:null,key:null,page:1,scale:null,mode:'select',D:null,task:null,vp:null,tick:0,pid:0};
+const toast=t=>$('#msg').textContent=t;
+const save=()=>{try{localStorage['fr:'+S.key]=JSON.stringify(S.D)}catch(e){toast('Storage full – export a backup')}};
+const ink=$('#ink');
+
+/* ---------- loading ---------- */
+async function openBuf(buf,key){
+  S.key=key;
+  S.D=JSON.parse(localStorage['fr:'+key]||'null')||{page:1,scale:null,ink:{},notes:{},vocab:[]};
+  S.doc=buf.numPages?buf:await pdfjsLib.getDocument({data:buf}).promise;
+  S.scale=S.D.scale;
+  $('#empty').style.display='none';$('#page').style.display='block';
+  $('#tot').textContent=S.doc.numPages;$('#cur').max=S.doc.numPages;
+  renderVocab();show(S.D.page||1);
+}
+const fileId=s=>(s.match(/\/d\/([\w-]{20,})/)||s.match(/[?&]id=([\w-]{20,})/)||s.match(/^([\w-]{20,})$/)||[])[1];
+function token(){return new Promise((ok,no)=>{
+  if(S.tok&&S.exp>Date.now())return ok(S.tok);
+  if(!window.google)return no('Google sign-in script is not loaded');
+  google.accounts.oauth2.initTokenClient({client_id:cfg.cid,scope:'https://www.googleapis.com/auth/drive.readonly',
+    callback:r=>r.access_token?(S.tok=r.access_token,S.exp=Date.now()+3.3e6,ok(S.tok)):no(r.error||'Sign-in failed')}).requestAccessToken();
+});}
+async function gfetch(u){
+  const h={};
+  if(cfg.cid)h.Authorization='Bearer '+await token();else u+='&key='+encodeURIComponent(cfg.key);
+  const r=await fetch(u,{headers:h});
+  if(!r.ok)throw new Error('Drive returned '+r.status+(r.status==404||r.status==403?' (check sharing and sign-in)':''));
+  return r;
+}
+/* Split books: Method-1.pdf, Method-2.pdf … are joined into ONE virtual document (continuous page numbers) */
+async function partsOf(base){
+  const parts=[];
+  for(let i=1;i<=99;i++){
+    const f=base+'-'+i+'.pdf';
+    const r=await fetch(encodeURI(f),{method:'HEAD'}).catch(()=>null);
+    if(!r||!r.ok)break;parts.push(f);
+  }
+  if(!parts.length){const r=await fetch(encodeURI(base+'.pdf'),{method:'HEAD'}).catch(()=>null);if(r&&r.ok)parts.push(base+'.pdf')}
+  return parts;
+}
+async function openParts(files){
+  let n=0;
+  const docs=await Promise.all(files.map(async f=>{
+    const r=await fetch(encodeURI(f));if(!r.ok)throw new Error('File not found: '+f);
+    const d=await pdfjsLib.getDocument({data:await r.arrayBuffer()}).promise;
+    toast('Loaded '+(++n)+' of '+files.length+' parts…');return d;
+  }));
+  const off=[];let total=0;docs.forEach(d=>{off.push(total);total+=d.numPages});
+  return{numPages:total,getPage:i=>{let k=docs.length-1;while(k>0&&off[k]>=i)k--;return docs[k].getPage(i-off[k])}};
+}
+async function openBook(id){
+  toast('Loading…');
+  if(S.repo){
+    const files=await partsOf(id);
+    if(!files.length)throw new Error('No files found for “'+id+'” (expected '+id+'-1.pdf, '+id+'-2.pdf …)');
+    await openBuf(await openParts(files),'repo:'+id);
+  }else{
+    await openBuf(await(await gfetch('https://www.googleapis.com/drive/v3/files/'+id+'?alt=media')).arrayBuffer(),id);
+  }
+  cfg.book=id;localStorage.cfg=JSON.stringify(cfg);toast(S.D.page>1?'Resumed at page '+S.D.page:'');
+}
+/* PDFs placed next to index.html: list them here, or leave empty to auto-detect on GitHub Pages */
+const BOOKS=[['Method','Method'],['Exercise','Exercise']]; // [label, base name]; Method-1.pdf, Method-2.pdf … are merged. Names are case-sensitive
+async function repoBooks(){
+  if(BOOKS.length)return BOOKS;
+  const m=location.hostname.match(/^(.+)\.github\.io$/);if(!m)return[];
+  const repo=location.pathname.split('/')[1]||location.hostname;
+  const j=await(await fetch('https://api.github.com/repos/'+m[1]+'/'+repo+'/contents/')).json();
+  return[...new Set(j.filter(f=>/\.pdf$/i.test(f.name)).map(f=>f.name.replace(/\.pdf$/i,'').replace(/[-_ ]\d+$/,'')))].map(x=>[x,x]);
+}
+async function initRepo(){
+  const b=await repoBooks().catch(()=>[]);if(!b.length)return false;
+  S.repo=true;const sel=$('#books');sel.innerHTML='';b.forEach(([n,f])=>sel.add(new Option(n,f)));
+  if(b.some(x=>x[1]===cfg.book))sel.value=cfg.book;
+  sel.hidden=false;$('#src').hidden=$('#go').hidden=true;
+  try{await openBook(sel.value)}catch(e){toast('Failed: '+e.message)}
+  return true;
+}
+async function openDrive(){
+  const raw=$('#src').value.trim(),fo=(raw.match(/\/folders\/([\w-]{20,})/)||[])[1],id=fo||fileId(raw);
+  if(!id)return toast('Paste a valid Drive file or folder link');
+  if(!cfg.cid&&!cfg.key){$('#side').classList.add('open');document.querySelector('details').open=true;return toast('Add a Client ID or API key first')}
+  cfg.last=raw;localStorage.cfg=JSON.stringify(cfg);
+  toast('Connecting…');
+  try{
+    const sel=$('#books');
+    if(!fo){sel.hidden=true;return await openBook(id)}
+    const q=encodeURIComponent("'"+fo+"' in parents and mimeType='application/pdf' and trashed=false");
+    const j=await(await gfetch('https://www.googleapis.com/drive/v3/files?q='+q+'&fields=files(id,name)&orderBy=name&pageSize=50')).json();
+    if(!j.files.length)return toast('No PDFs found in that folder');
+    sel.innerHTML='';j.files.forEach(f=>sel.add(new Option(f.name,f.id)));
+    if(j.files.some(f=>f.id===cfg.book))sel.value=cfg.book;
+    sel.hidden=false;await openBook(sel.value);
+  }catch(e){toast('Failed: '+(e.message||e))}
+}
+/* ---------- page rendering ---------- */
+async function show(n){
+  n=Math.max(1,Math.min(S.doc.numPages,Math.round(+n)||1));
+  const my=++S.tick;S.page=n;S.D.page=n;save();
+  $('#cur').value=n;$('#prog').style.width=(n/S.doc.numPages*100)+'%';
+  const pg=await S.doc.getPage(n);if(my!==S.tick)return;
+  if(!S.scale)S.scale=Math.min(3,($('#stage').clientWidth-30)/pg.getViewport({scale:1}).width);
+  const vp=S.vp=pg.getViewport({scale:S.scale}),r=devicePixelRatio||1,c=$('#pdf');
+  if(S.task){S.task.cancel();try{await S.task.promise}catch(e){}}
+  if(my!==S.tick)return;
+  c.width=ink.width=vp.width*r;c.height=ink.height=vp.height*r;
+  c.style.width=vp.width+'px';c.style.height=vp.height+'px';
+  $('#tl').innerHTML='';drawInk();renderNotes();
+  S.task=pg.render({canvasContext:c.getContext('2d'),viewport:vp,transform:[r,0,0,r,0,0]});
+  try{await S.task.promise}catch(e){return}
+  if(my!==S.tick)return;
+  pdfjsLib.renderTextLayer({textContentSource:await pg.getTextContent(),container:$('#tl'),viewport:vp,textDivs:[]});
+  $('#stage').scrollTop=0;
+}
+const zoom=f=>{S.scale=S.D.scale=Math.max(.4,Math.min(4,S.scale*f));save();show(S.page)};
+
+/* ---------- ink ---------- */
+function drawInk(){
+  const x=ink.getContext('2d'),W=ink.width;x.clearRect(0,0,W,ink.height);x.lineCap=x.lineJoin='round';
+  for(const s of S.D.ink[S.page]||[]){
+    x.strokeStyle=s.c;x.globalAlpha=s.h?.3:1;x.lineWidth=s.w*W;x.beginPath();
+    s.p.forEach(([a,b],i)=>i?x.lineTo(a*W,b*W):x.moveTo(a*W,b*W));
+    if(s.p.length==1)x.lineTo(s.p[0][0]*W+.1,s.p[0][1]*W);
+    x.stroke();
+  }
+  x.globalAlpha=1;
+}
+const pt=e=>{const r=ink.getBoundingClientRect();return[+((e.clientX-r.left)/r.width).toFixed(4),+((e.clientY-r.top)/r.width).toFixed(4)]};
+function erase(p){
+  const a=S.D.ink[S.page];if(!a)return;
+  const k=a.filter(s=>!s.p.some(q=>Math.hypot(q[0]-p[0],q[1]-p[1])<12/S.vp.width+s.w/2));
+  if(k.length!==a.length){S.D.ink[S.page]=k;drawInk()}
+}
+let cur=null;
+ink.onpointerdown=e=>{
+  const p=pt(e),m=S.mode;
+  if(m==='type'){e.preventDefault();(S.D.types??={});(S.D.types[S.page]??=[]).push({x:p[0],y:p[1],t:'',c:$('#col').value,s:(+$('#fs').value||16)/S.vp.width,f:1});renderNotes();return}
+  if(m==='note'){(S.D.notes[S.page]??=[]).push({x:p[0],y:p[1],t:'',f:1});renderNotes();setMode('select');return}
+  ink.setPointerCapture(e.pointerId);
+  if(m==='erase'){cur={e:1};erase(p);return}
+  cur={c:$('#col').value,h:m==='hl',w:(m==='hl'?18:2.5)/S.vp.width,p:[p]};
+  (S.D.ink[S.page]??=[]).push(cur);drawInk();
+};
+ink.onpointermove=e=>{if(!cur)return;const p=pt(e);if(cur.e)erase(p);else{cur.p.push(p);drawInk()}};
+ink.onpointerup=ink.onpointercancel=()=>{if(cur){save();cur=null}};
+const undo=()=>{const a=S.D&&S.D.ink[S.page];if(a&&a.length){a.pop();save();drawInk()}};
+
+/* ---------- text notes ---------- */
+function renderNotes(){
+  const L=$('#notes');L.innerHTML='';const W=S.vp.width;
+  (S.D.notes[S.page]||[]).forEach(n=>{
+    const d=document.createElement('div');d.className='note';
+    d.style.left=n.x*W+'px';d.style.top=n.y*W+'px';
+    d.innerHTML='<b><span>note</span><span class="x" title="Delete">✕</span></b><div contenteditable></div>';
+    const t=d.querySelector('[contenteditable]'),h=d.querySelector('b');
+    t.innerText=n.t;t.oninput=()=>{n.t=t.innerText;save()};
+    h.querySelector('.x').onclick=()=>{S.D.notes[S.page]=S.D.notes[S.page].filter(z=>z!==n);save();renderNotes()};
+    h.onpointerdown=e=>{
+      if(e.target.classList.contains('x'))return;
+      h.setPointerCapture(e.pointerId);const sx=e.clientX,sy=e.clientY,ox=n.x,oy=n.y;
+      h.onpointermove=m=>{n.x=ox+(m.clientX-sx)/W;n.y=oy+(m.clientY-sy)/W;d.style.left=n.x*W+'px';d.style.top=n.y*W+'px'};
+      h.onpointerup=()=>{h.onpointermove=null;save()};
+    };
+    L.append(d);
+    if(n.f){delete n.f;setTimeout(()=>t.focus(),0)}
+  });
+  const pg=S.page;
+  (S.D.types?.[pg]||[]).forEach(n=>{
+    const t=document.createElement('div');t.className='tx';t.contentEditable=true;t.spellcheck=false;
+    t.style.cssText='left:'+n.x*W+'px;top:'+(n.y-n.s*.6)*W+'px;color:'+n.c+';font-size:'+n.s*W+'px';
+    t.innerText=n.t;
+    t.oninput=()=>{n.t=t.innerText;save()};
+    t.onblur=()=>{if(!t.innerText.trim()){S.D.types[pg]=S.D.types[pg].filter(z=>z!==n);t.remove();save()}};
+    t.onpointerdown=e=>e.stopPropagation();
+    L.append(t);
+    if(n.f){delete n.f;setTimeout(()=>t.focus(),0)}
+  });
+}
+
+/* ---------- French tools: translate, speak, vocab ---------- */
+const pop=$('#pop');pop.onpointerdown=e=>e.preventDefault();
+const speak=t=>{const u=new SpeechSynthesisUtterance(t);u.lang='fr-FR';u.rate=.85;speechSynthesis.cancel();speechSynthesis.speak(u)};
+let selT;
+document.addEventListener('selectionchange',()=>{
+  clearTimeout(selT);
+  selT=setTimeout(async()=>{
+    const s=getSelection(),t=s.toString().trim().replace(/\s+/g,' ');
+    if(S.mode!=='select'||!t||t.length>200||!s.rangeCount||!$('#tl').contains(s.anchorNode)){pop.style.display='none';return}
+    const r=s.getRangeAt(0).getBoundingClientRect(),ctx=(s.anchorNode.parentElement.textContent||'').trim(),id=++S.pid;
+    pop.style.display='block';pop.style.left=Math.max(8,Math.min(r.left,innerWidth-310))+'px';pop.style.top=Math.min(r.bottom+8,innerHeight-150)+'px';
+    pop.innerHTML='<strong></strong><div id="tr">Translating…</div><div class="row"><button id="sp">Listen</button><button id="sv">Save word</button></div>';
+    pop.firstChild.textContent=t;
+    let tr='';
+    try{tr=(await(await fetch('https://api.mymemory.translated.net/get?q='+encodeURIComponent(t)+'&langpair=fr|en')).json()).responseData.translatedText}catch(e){tr='(translation unavailable offline)'}
+    if(id!==S.pid)return;
+    $('#tr').textContent=tr;
+    $('#sp').onclick=()=>speak(t);
+    $('#sv').onclick=()=>{S.D.vocab.push({w:t,tr,ctx,p:S.page});save();renderVocab();pop.style.display='none';getSelection().removeAllRanges();$('#side').classList.add('open')};
+  },450);
+});
+function renderVocab(){
+  const L=$('#vl');L.innerHTML='';
+  if(!S.D.vocab.length)L.textContent='Select a word on the page to save it here.';
+  S.D.vocab.forEach((v,i)=>{
+    const d=document.createElement('div');d.className='v';
+    d.innerHTML='<div><strong></strong> <span class="t"></span><small></small></div><div class="row"><button class="g">p.</button><button class="s">Listen</button><button class="d" aria-label="Delete">✕</button></div>';
+    d.querySelector('strong').textContent=v.w;d.querySelector('.t').textContent='– '+v.tr;d.querySelector('small').textContent=v.ctx;
+    d.querySelector('.g').textContent='p.'+v.p;d.querySelector('.g').onclick=()=>show(v.p);
+    d.querySelector('.s').onclick=()=>speak(v.w);
+    d.querySelector('.d').onclick=()=>{S.D.vocab.splice(i,1);save();renderVocab()};
+    L.append(d);
+  });
+}
+const download=(name,text,type)=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),999)};
+const clean=s=>String(s).replace(/[\t\r\n]+/g,' ');
+
+/* ---------- AI tutor (summary, quiz, key words, ask) ---------- */
+const SYS='You are a patient French tutor for an English-speaking learner. Use ONLY the supplied textbook content as your source. Be concise and accurate.';
+const parse=t=>JSON.parse(t.slice(t.indexOf('{'),t.lastIndexOf('}')+1));
+async function pageText(i){return(await(await S.doc.getPage(i)).getTextContent()).items.map(x=>x.str).join(' ').replace(/\s+/g,' ').trim()}
+async function srcBlocks(){
+  let a=S.page,b=S.page;
+  if($('#scope').value==='rng'){a=Math.max(1,+$('#a1').value||S.page);b=Math.min(S.doc.numPages,+$('#a2').value||a);if(b<a)[a,b]=[b,a];b=Math.min(b,a+11)}
+  let txt='';for(let i=a;i<=b;i++)txt+='\n[Page '+i+']\n'+await pageText(i);
+  if(txt.replace(/\[Page \d+\]/g,'').trim().length>40)return[{type:'text',text:'Textbook content:\n'+txt.slice(0,24000)}];
+  if(a===b)return[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:$('#pdf').toDataURL('image/jpeg',.8).split(',')[1]}}];
+  throw new Error('No readable text in this range (scanned PDF). Try one page at a time.');
+}
+async function ai(prompt,max=1800){
+  if(!cfg.ak){$('#side').classList.add('open');document.querySelector('details').open=true;throw new Error('Add your Anthropic API key under Settings below.')}
+  const blocks=await srcBlocks();
+  const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+    headers:{'content-type':'application/json','x-api-key':cfg.ak,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+    body:JSON.stringify({model:cfg.model||'claude-sonnet-5-5',max_tokens:max,system:SYS,messages:[{role:'user',content:[...blocks,{type:'text',text:prompt}]}]})});
+  const j=await r.json();if(!r.ok)throw new Error((j.error&&j.error.message)||('API error '+r.status));
+  return j.content.filter(c=>c.type==='text').map(c=>c.text).join('');
+}
+async function run(fn){
+  if(!S.doc)return toast('Open a book first');
+  const bs=document.querySelectorAll('#tai button');bs.forEach(b=>b.disabled=true);$('#aiout').textContent='Thinking…';
+  try{await fn()}catch(e){$('#aiout').textContent='⚠ '+(e.message||e)}
+  bs.forEach(b=>b.disabled=false);
+}
+function out(t,extra){
+  const o=$('#aiout');o.innerHTML='';const d=document.createElement('div');d.style.whiteSpace='pre-wrap';d.textContent=t;o.append(d);
+  if(extra){const b=document.createElement('button');b.textContent=extra.label;b.style.marginTop='8px';b.onclick=()=>{extra.fn();b.disabled=true};o.append(b)}
+}
+function quiz(qs){
+  const o=$('#aiout');o.innerHTML='';let score=0,done=0;
+  const res=document.createElement('div');res.style.cssText='font-weight:600;padding-top:8px';
+  qs.forEach((q,i)=>{
+    const d=document.createElement('div');d.className='q';
+    const h=document.createElement('b');h.textContent=(i+1)+'. '+q.q;d.append(h);
+    const ex=document.createElement('small');
+    q.options.forEach((op,k)=>{
+      const b=document.createElement('button');b.textContent=op;b.style.cssText='display:block;width:100%;text-align:left;margin:4px 0';
+      b.onclick=()=>{
+        if(d.dataset.done)return;d.dataset.done=1;done++;
+        const ok=k===q.answer;if(ok)score++;
+        b.style.borderColor=ok?'#1a9a4a':'#d33';d.querySelectorAll('button')[q.answer].style.borderColor='#1a9a4a';
+        ex.textContent=(ok?'Correct. ':'Not quite. ')+(q.why||'');
+        if(done===qs.length){
+          (S.D.quiz??=[]).push({p:S.page,s:score,n:qs.length,d:Date.now()});save();
+          res.textContent='Score: '+score+' / '+qs.length+'   Recent: '+S.D.quiz.slice(-5).map(z=>z.s+'/'+z.n).join(', ');
+        }
+      };
+      d.append(b);
+    });
+    d.append(ex);o.append(d);
+  });
+  o.append(res);
+}
+$('#aS').onclick=()=>run(async()=>{
+  const t=await ai('Summarise this for a French learner. Give: 1) a 3–4 sentence summary, 2) the key grammar points, each with one French example and its English meaning, 3) the 8 most useful words or phrases as "French – English". Plain text only, no markdown symbols.');
+  out(t,{label:'Save as note on this page',fn:()=>{(S.D.notes[S.page]??=[]).push({x:.04,y:.04,t});save();renderNotes()}});
+});
+$('#aK').onclick=()=>run(async()=>{
+  const j=parse(await ai('Pick the 10 most useful French words or phrases from this content for a learner. Return ONLY JSON: {"words":[{"fr":"","en":"","example":"a French sentence"}]}'));
+  out(j.words.map(w=>w.fr+' – '+w.en).join('\n'),{label:'Add all to vocabulary',fn:()=>{j.words.forEach(w=>S.D.vocab.push({w:w.fr,tr:w.en,ctx:w.example||'',p:S.page}));save();renderVocab()}});
+});
+$('#aQ').onclick=()=>run(async()=>quiz(parse(await ai('Create '+$('#qn').value+' multiple-choice questions to test a learner on this content (mix vocabulary, grammar and fill-in-the-blank; write questions in French with an English hint where helpful). Return ONLY JSON: {"questions":[{"q":"","options":["","","",""],"answer":0,"why":"short English explanation"}]} where answer is the 0-based index of the correct option.',3500)).questions));
+$('#aA').onclick=()=>run(async()=>{const q=$('#ask').value.trim();out(q?await ai('Answer this question about the content, in English with French examples: '+q):'Type a question first.')});
+$('#ask').onkeydown=e=>e.key==='Enter'&&$('#aA').click();
+$('#scope').onchange=e=>{$('#a1').hidden=$('#a2').hidden=e.target.value!=='rng';$('#a1').value=$('#a2').value=S.page};
+document.querySelectorAll('#tabs [data-t]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#tabs [data-t]').forEach(x=>x.classList.toggle('on',x===b));
+  $('#tvo').hidden=b.dataset.t!=='vo';$('#tai').hidden=b.dataset.t!=='ai';
+});
+
+/* ---------- wiring ---------- */
+function setMode(m){
+  S.mode=m;document.querySelectorAll('[data-m]').forEach(b=>b.classList.toggle('on',b.dataset.m===m));
+  ink.style.pointerEvents=m==='select'?'none':'auto';ink.style.touchAction='none';
+  ink.style.cursor=m==='note'?'copy':m==='type'?'text':m==='select'?'':'crosshair';
+  if(m==='pen')$('#col').value='#e63946';if(m==='hl')$('#col').value='#ffd60a';if(m==='type')$('#col').value='#0b3d91';
+}
+document.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>setMode(b.dataset.m));
+$('#go').onclick=openDrive;$('#books').onchange=e=>openBook(e.target.value).catch(x=>toast('Failed: '+x.message));$('#src').onkeydown=e=>e.key==='Enter'&&openDrive();
+$('#lb').onclick=()=>$('#loc').click();
+$('#loc').onchange=async e=>{const f=e.target.files[0];if(f){toast('Opening…');await openBuf(await f.arrayBuffer(),'local:'+f.name+':'+f.size);toast('')}};
+$('#pv').onclick=()=>S.doc&&show(S.page-1);$('#nx').onclick=()=>S.doc&&show(S.page+1);
+$('#cur').onchange=e=>S.doc&&show(e.target.value);
+$('#zi').onclick=()=>S.doc&&zoom(1.15);$('#zo').onclick=()=>S.doc&&zoom(1/1.15);
+$('#fit').onclick=()=>{if(!S.doc)return;S.scale=S.D.scale=null;save();show(S.page)};
+$('#un').onclick=undo;$('#vt').onclick=()=>$('#side').classList.toggle('open');
+$('#csv').onclick=()=>S.D&&download('french-vocab.txt',S.D.vocab.map(v=>clean(v.w)+'\t'+clean(v.tr)+'<br><i>'+clean(v.ctx)+'</i> (p.'+v.p+')').join('\n'),'text/plain');
+$('#bk').onclick=()=>S.D&&download('french-notes-backup.json',JSON.stringify(S.D),'application/json');
+$('#rb').onclick=()=>$('#rs').click();
+$('#rs').onchange=async e=>{if(!S.doc)return toast('Open the book first');try{S.D=JSON.parse(await e.target.files[0].text());save();renderVocab();show(S.D.page||1);toast('Backup restored')}catch(err){toast('Invalid backup file')}};
+$('#sc').onclick=()=>{cfg.cid=$('#cid').value.trim();cfg.key=$('#key').value.trim();cfg.ak=$('#ak').value.trim();cfg.model=$('#md').value.trim();localStorage.cfg=JSON.stringify(cfg);toast('Settings saved')};
+addEventListener('keydown',e=>{
+  if(!S.doc||e.target.isContentEditable||/INPUT|TEXTAREA/.test(e.target.tagName))return;
+  if(e.key==='ArrowRight'||e.key==='PageDown')show(S.page+1);
+  else if(e.key==='ArrowLeft'||e.key==='PageUp')show(S.page-1);
+  else if((e.ctrlKey||e.metaKey)&&e.key==='z'){e.preventDefault();undo()}
+});
+$('#cid').value=cfg.cid||'';$('#ak').value=cfg.ak||'';$('#md').value=cfg.model||'';$('#key').value=cfg.key||'';$('#src').value=FOLDER_LINK;
+setMode('select');
+initRepo().then(ok=>{
+  if(ok)return;
+  if(cfg.key&&!cfg.cid)openDrive();else if(!cfg.cid)toast('Add your Google Client ID or API key in the Vocabulaire panel, then press Open');else toast('Press “Open from Drive” to sign in');
+});
+</script>
+</body>
+</html>
